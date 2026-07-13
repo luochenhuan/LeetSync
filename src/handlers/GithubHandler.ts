@@ -42,6 +42,39 @@ const languagesToExtensions: Record<string, string> = {
   Dart: '.dart',
   Elixir: '.ex',
 };
+const languagesToCommentStyles: Record<string, { start: string; middle: string; end: string }> = {
+  '.py': { start: '"""', middle: '', end: '"""' },
+  '.sql': { start: '--', middle: '--', end: '--' },
+  '.rb': { start: '=begin', middle: '', end: '=end' },
+  '.ex': { start: '#', middle: '#', end: '#' },
+};
+const defaultCommentStyle = { start: '/*', middle: '', end: '*/' };
+
+const pythonTemplateImports = [
+  'import unittest, sys, math, heapq',
+  'from collections import defaultdict',
+  'from typing import List, Optional',
+].join('\n');
+
+const pythonTemplateFooter = [
+  '# sol = Solution()',
+  '',
+  '# class TestCase(unittest.TestCase):',
+  '#     def setUp(self):',
+  '#         self.solution = Solution()',
+  '',
+  '#     def tearDown(self):',
+  '#         pass',
+  '',
+  '#     def test_solution(self):',
+  '#         actual = self.solution.Func()',
+  '#         expected = None',
+  '#         self.assertEqual(actual, expected)',
+  '',
+  "# if __name__ == '__main__':",
+  '#     unittest.main()',
+].join('\n');
+
 interface GithubUser {
   id: number;
   avatar_url?: string | null;
@@ -246,36 +279,47 @@ export default class GithubHandler {
       difficulty,
     )}' alt='Difficulty: ${difficulty}' />`;
   }
-  async createReadmeFile(
+  async createNotesFile(
     path: string,
-    content: string,
+    fileName: string,
+    notes: string,
     message: string,
-    problemSlug: string,
     questionTitle: string,
-    difficulty: QuestionDifficulty,
   ) {
-    //check if that file already exists
-    //if it does, Update the file with the new content
-    //if it doesn't, create a new file with the content
-    const mdContent = `<h2><a href="https://leetcode.com/problems/${problemSlug}">${questionTitle}</a></h2> ${this.createDifficultyBadge(
-      difficulty,
-    )}<hr>${content}`;
-
-    await this.upload(path, 'README.md', mdContent, message);
-  }
-  async createNotesFile(path: string, notes: string, message: string, questionTitle: string) {
     //check if that file already exists
     //if it does, Update the file with the new content
     //if it doesn't, create a new file with the content
     const mdContent = `<h2>${questionTitle} Notes</h2><hr>${notes}`;
 
-    await this.upload(path, 'Notes.md', mdContent, message);
+    await this.upload(path, fileName, mdContent, message);
+  }
+  formatDate(timestamp: number) {
+    const date = new Date(timestamp * 1000);
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())}`;
+  }
+  createFileHeader(problemSlug: string, lang: string, timestamp: number) {
+    const style = languagesToCommentStyles[lang] ?? defaultCommentStyle;
+    const prefix = style.middle ? `${style.middle} ` : '';
+    return [
+      style.start,
+      `${prefix}Source : https://leetcode.com/problems/${problemSlug}`,
+      `${prefix}Author : ${this.username}`,
+      `${prefix}Date   : ${this.formatDate(timestamp)}`,
+      style.end,
+    ].join('\n');
+  }
+  applyTemplate(code: string, problemSlug: string, lang: string, timestamp: number) {
+    const header = this.createFileHeader(problemSlug, lang, timestamp);
+    if (lang === '.py') {
+      return `${header}\n${pythonTemplateImports}\n\n${code}\n\n${pythonTemplateFooter}\n`;
+    }
+    return `${header}\n\n${code}\n`;
   }
   async createSolutionFile(
     path: string,
-    code: string,
-    problemName: string, //the code
-    lang: string, //.py, .cpp, .java etc
+    fileName: string,
+    content: string,
     stats: {
       memory: number;
       memoryDisplay: string;
@@ -291,7 +335,7 @@ export default class GithubHandler {
     const msg = `Time: ${stats.runtimeDisplay} (${stats.runtimePercentile.toFixed(2)}%) | Memory: ${
       stats.memoryDisplay
     } (${stats.memoryPercentile.toFixed(2)}%) - LeetSync`;
-    await this.upload(path, `${problemName}${lang}`, code, msg);
+    await this.upload(path, fileName, content, msg);
   }
 
   async submit(
@@ -318,14 +362,11 @@ export default class GithubHandler {
       console.log('❌ Failed Attempt');
       return false;
     }
-    //create a path for the files to be uploaded
-    let basePath = `${question.questionFrontendId ?? question.questionId ?? 'unknown'}-${question.titleSlug}`;
+    const { title, titleSlug, difficulty, questionId } = question;
 
-    if (this.github_leetsync_subdirectory) {
-      basePath = `${this.github_leetsync_subdirectory}/${basePath}`;
-    }
-
-    const { title, titleSlug, content, difficulty, questionId } = question;
+    //solutions live in a flat directory (defaults to `leetcode/`), named `<number>-<slug><ext>`
+    const basePath = this.github_leetsync_subdirectory || 'leetcode';
+    const problemNumber = question.questionFrontendId ?? question.questionId ?? 'unknown';
 
     const langExtension = this.getProblemExtension(lang.verboseName);
 
@@ -333,19 +374,22 @@ export default class GithubHandler {
       console.log('❌ Language not supported');
       return false;
     }
-    await this.createReadmeFile(
-      basePath,
-      content,
-      `Added README.md file for ${title}`,
-      titleSlug,
-      title,
-      difficulty,
-    );
+
+    const fileName = `${problemNumber}-${titleSlug}${langExtension}`;
+    const fileContent = this.applyTemplate(code, titleSlug, langExtension, submission.timestamp);
+
     if (notes && notes?.length) {
-      await this.createNotesFile(basePath, notes, `Added Notes.md file for ${title}`, titleSlug);
+      //notes share the flat directory, so name them per-problem to avoid collisions
+      await this.createNotesFile(
+        basePath,
+        `${problemNumber}-${titleSlug}-notes.md`,
+        notes,
+        `Added notes file for ${title}`,
+        title,
+      );
     }
 
-    await this.createSolutionFile(basePath, code, question.titleSlug, langExtension, {
+    await this.createSolutionFile(basePath, fileName, fileContent, {
       memory,
       memoryDisplay,
       memoryPercentile,
