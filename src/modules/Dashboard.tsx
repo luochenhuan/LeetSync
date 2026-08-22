@@ -27,6 +27,11 @@ import flameGif from '../assets/flame.gif';
 
 interface DashboardProps {}
 
+type SolvedProblem = {
+  question: { difficulty: string; questionId: string };
+  timestamp: number;
+};
+
 const LinkedGithubComponents = () => {
   const [githubUsername, setGithubUsername] = React.useState('');
   const [githubRepo, setGithubRepo] = React.useState('');
@@ -90,8 +95,10 @@ const Dashboard: React.FC<DashboardProps> = ({}) => {
         setGithubRepo(github_leetsync_repo);
         if (!problemsSolved) return;
         let [easy, medium, hard] = [0, 0, 0];
-        const problemSolvedValues = Object.values(problemsSolved);
-        problemSolvedValues.forEach((problem: any) => {
+        const problemSolvedValues = Object.values(
+          problemsSolved as Record<string, SolvedProblem>,
+        );
+        problemSolvedValues.forEach((problem) => {
           if (problem.question.difficulty === 'Easy') {
             easy++;
           } else if (problem.question.difficulty === 'Medium') {
