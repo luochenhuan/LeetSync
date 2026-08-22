@@ -20,6 +20,7 @@ import {
   formatProblemsPerDay,
   generateTitle,
   getTotalNumberOfStreaks,
+  toDateKey,
 } from '../utils/streak.helper';
 import { capitalize } from '../utils/string-manipulation.helper';
 import { Footer } from './Footer';
@@ -84,7 +85,7 @@ const Dashboard: React.FC<DashboardProps> = ({}) => {
   const [githubUsername, setGithubUsername] = React.useState('');
   const [githubRepo, setGithubRepo] = React.useState('');
 
-  const solvedProblemsToday = problemsPerDay?.[new Date().toLocaleDateString()] || 0;
+  const solvedProblemsToday = problemsPerDay?.[toDateKey(new Date())] || 0;
 
   React.useEffect(() => {
     chrome.storage.sync.get(

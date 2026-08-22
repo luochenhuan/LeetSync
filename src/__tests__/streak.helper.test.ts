@@ -3,6 +3,7 @@ import {
   formatProblemsPerDay,
   hasSolvedAProblemToday,
   generateTitle,
+  toDateKey,
 } from '../utils/streak.helper';
 
 const getDaysBefore = (numberOfDays: number) => {
@@ -12,7 +13,7 @@ const getDaysBefore = (numberOfDays: number) => {
 describe('Streak Helper Functions', () => {
   beforeEach(() => {
     jest.useFakeTimers();
-    const mockDate = new Date('2024-01-15T12:00:00Z');
+    const mockDate = new Date(2024, 0, 15, 12, 0, 0);
     jest.setSystemTime(mockDate);
   });
 
@@ -71,17 +72,17 @@ describe('Streak Helper Functions', () => {
   describe('formatProblemsPerDay', () => {
     it('should format problems correctly for a single day', () => {
       const problems = [
-        { timestamp: new Date('2024-01-15T10:00:00Z').getTime() },
-        { timestamp: new Date('2024-01-15T14:00:00Z').getTime() },
+        { timestamp: new Date(2024, 0, 15, 10, 0, 0).getTime() },
+        { timestamp: new Date(2024, 0, 15, 14, 0, 0).getTime() },
       ];
       const result = formatProblemsPerDay(problems);
       expect(result['2024-01-15']).toBe(2);
     });
     it('should handle multiple days correctly', () => {
       const problems = [
-        { timestamp: new Date('2024-01-15T10:00:00Z').getTime() },
-        { timestamp: new Date('2024-01-15T14:00:00Z').getTime() },
-        { timestamp: new Date('2024-01-14T10:00:00Z').getTime() },
+        { timestamp: new Date(2024, 0, 15, 10, 0, 0).getTime() },
+        { timestamp: new Date(2024, 0, 15, 14, 0, 0).getTime() },
+        { timestamp: new Date(2024, 0, 14, 10, 0, 0).getTime() },
       ];
       const result = formatProblemsPerDay(problems);
       expect(result['2024-01-15']).toBe(2);
@@ -91,49 +92,76 @@ describe('Streak Helper Functions', () => {
       expect(formatProblemsPerDay([])).toEqual({});
     });
     it('should handle problems with same timestamp', () => {
-      const timestamp = new Date('2024-01-15T10:00:00Z').getTime();
+      const timestamp = new Date(2024, 0, 15, 10, 0, 0).getTime();
       const problems = [{ timestamp }, { timestamp }];
       const result = formatProblemsPerDay(problems);
       expect(result['2024-01-15']).toBe(2);
     });
-    it('should ignore negative timestamps', () => {
+    it('should handle negative timestamps', () => {
       const problems = [{ timestamp: -1 }];
       const result = formatProblemsPerDay(problems);
-      // Negative timestamp is 1969-12-31 in UTC
-      expect(result['1969-12-31']).toBe(1);
+      // 1ms before the epoch; which local day that lands on is timezone-dependent,
+      // so assert it is counted exactly once rather than naming the day.
+      expect(Object.values(result)).toEqual([1]);
     });
     it('should handle far future dates', () => {
-      const problems = [{ timestamp: new Date('2099-12-31T23:59:59Z').getTime() }];
+      const problems = [{ timestamp: new Date(2099, 11, 31, 23, 59, 59).getTime() }];
       const result = formatProblemsPerDay(problems);
       expect(result['2099-12-31']).toBe(1);
     });
     it('should handle non-integer timestamps', () => {
-      const problems = [{ timestamp: 1705291200000.9 }];
+      const problems = [{ timestamp: new Date(2024, 0, 15, 12, 0, 0).getTime() + 0.9 }];
       const result = formatProblemsPerDay(problems);
       expect(result['2024-01-15']).toBe(1);
     });
   });
 
+  describe('toDateKey', () => {
+    it('formats as YYYY-MM-DD whatever the browser locale is', () => {
+      // toLocaleDateString() would give 1/5/2024 on en-US and 05/01/2024 on en-GB.
+      expect(toDateKey(new Date(2024, 0, 5))).toBe('2024-01-05');
+    });
+
+    it('keys by the local day, not the UTC day', () => {
+      // Late evening local time is already tomorrow in UTC west of Greenwich,
+      // so toISOString() would file this under the 16th.
+      expect(toDateKey(new Date(2024, 0, 15, 23, 30))).toBe('2024-01-15');
+    });
+  });
+
+  describe("dashboard's today lookup", () => {
+    it("reads today's count out of the map formatProblemsPerDay builds", () => {
+      // 11:30pm local: the case that used to roll over into tomorrow's UTC key.
+      jest.setSystemTime(new Date(2024, 0, 15, 23, 30));
+      const problemsPerDay = formatProblemsPerDay([
+        { timestamp: Date.now() },
+        { timestamp: Date.now() },
+      ]);
+
+      // The expression Dashboard.tsx uses to read today's count.
+      expect(problemsPerDay[toDateKey(new Date())] || 0).toBe(2);
+    });
+  });
+
   describe('hasSolvedAProblemToday', () => {
     it('should return true when last solved is today', () => {
-      expect(hasSolvedAProblemToday(new Date('2024-01-15T12:00:00Z').getTime())).toBe(true);
+      expect(hasSolvedAProblemToday(new Date(2024, 0, 15, 12, 0, 0).getTime())).toBe(true);
     });
     it('should return false when last solved is not today', () => {
-      expect(hasSolvedAProblemToday(new Date('2024-01-14T12:00:00Z').getTime())).toBe(false);
+      expect(hasSolvedAProblemToday(new Date(2024, 0, 14, 12, 0, 0).getTime())).toBe(false);
     });
     it('should handle invalid input', () => {
       expect(hasSolvedAProblemToday(NaN)).toBe(false);
       expect(hasSolvedAProblemToday(0)).toBe(false);
     });
     it('should handle edge case at midnight', () => {
-      expect(hasSolvedAProblemToday(new Date('2024-01-15T00:00:00Z').getTime())).toBe(true);
+      expect(hasSolvedAProblemToday(new Date(2024, 0, 15, 0, 0, 0).getTime())).toBe(true);
     });
     it('should handle timestamps at the end of the day', () => {
-      expect(hasSolvedAProblemToday(new Date('2024-01-15T23:59:59Z').getTime())).toBe(true);
+      expect(hasSolvedAProblemToday(new Date(2024, 0, 15, 23, 59, 59).getTime())).toBe(true);
     });
-    it('should handle timestamps in different timezones', () => {
-      // Simulate a timestamp for 2024-01-15 in UTC+8
-      const timestamp = Date.UTC(2024, 0, 15, 8, 0, 0);
+    it('should count a problem solved earlier the same local day', () => {
+      const timestamp = new Date(2024, 0, 15, 8, 0, 0).getTime();
       expect(hasSolvedAProblemToday(timestamp)).toBe(true);
     });
     it('should return false for string input', () => {

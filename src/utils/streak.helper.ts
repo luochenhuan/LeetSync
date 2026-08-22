@@ -1,5 +1,20 @@
 import titles from './streak_levels_messages.json';
 
+/**
+ * Formats a date as a `YYYY-MM-DD` key in the viewer's own timezone.
+ *
+ * Every date-keyed map here, and every lookup into one, must go through this
+ * function. `toISOString()` keys by the UTC day, which rolls over mid-evening
+ * for anyone west of UTC, and `toLocaleDateString()` changes shape with the
+ * browser locale (`1/15/2024` on en-US, `2024-01-15` on en-CA).
+ */
+export const toDateKey = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 export const getTotalNumberOfStreaks = (streak: { [date: string]: number }) => {
   const streakDates = Object.keys(streak)
     .filter((date) => streak[date] > 0)
@@ -26,8 +41,7 @@ export const formatProblemsPerDay = (
 ): { [date: string]: number } => {
   const problemsPerDay: { [date: string]: number } = {};
   problemsSolved.forEach((problem) => {
-    const date = new Date(problem.timestamp);
-    const dateStr = date.toISOString().split('T')[0];
+    const dateStr = toDateKey(new Date(problem.timestamp));
     problemsPerDay[dateStr] = (problemsPerDay[dateStr] || 0) + 1;
   });
   return problemsPerDay;
@@ -35,10 +49,7 @@ export const formatProblemsPerDay = (
 
 export const hasSolvedAProblemToday = (lastSolved: number): boolean => {
   if (!lastSolved || isNaN(lastSolved)) return false;
-  const today = new Date();
-  const todayStr = today.toISOString().split('T')[0];
-  const lastSolvedStr = new Date(lastSolved).toISOString().split('T')[0];
-  return todayStr === lastSolvedStr;
+  return toDateKey(new Date()) === toDateKey(new Date(lastSolved));
 };
 
 export function generateTitle(dailyProblemsSolved: number): [string, string] {
