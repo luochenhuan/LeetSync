@@ -24,8 +24,55 @@ const README_SCAFFOLD = [
 const ROW_PATTERN =
   /^\|\s*([^|]*?)\s*\|\s*\[([^\]]*)\]\(https:\/\/leetcode\.com\/problems\/([^)/]+)\/?\)\s*\|\s*\[[^\]]*\]\(([^)]*)\)\s*\|\s*([^|]*?)\s*\|$/;
 
+/* Solution files are committed as `<number>-<slug><ext>`; notes files reuse the name with `.md`. */
+const SOLUTION_FILE_PATTERN = /^(\d+)-(.+)\.([A-Za-z0-9+#]+)$/;
+
+/* Words LeetCode leaves lowercase in a title unless they open it. */
+const MINOR_TITLE_WORDS = new Set([
+  'a',
+  'an',
+  'and',
+  'at',
+  'by',
+  'for',
+  'from',
+  'in',
+  'of',
+  'or',
+  'the',
+  'to',
+  'with',
+]);
+const ROMAN_NUMERAL_PATTERN = /^[ivx]+$/;
+
 export function problemUrl(slug: string) {
   return `https://leetcode.com/problems/${slug}/`;
+}
+
+/**
+ * Recovers the problem number and slug from a committed solution file name, or null when the
+ * file is not a solution. Notes files share the directory and are excluded by their extension.
+ */
+export function parseSolutionFileName(fileName: string): { number: string; slug: string } | null {
+  const match = fileName.match(SOLUTION_FILE_PATTERN);
+  if (!match) return null;
+
+  const [, number, slug, extension] = match;
+  if (extension.toLowerCase() === 'md') return null;
+  return { number, slug };
+}
+
+/* Best-effort display title for a backfilled problem whose metadata could not be fetched. */
+export function titleFromSlug(slug: string) {
+  return slug
+    .split('-')
+    .filter(Boolean)
+    .map((word, index) => {
+      if (ROMAN_NUMERAL_PATTERN.test(word)) return word.toUpperCase();
+      if (index > 0 && MINOR_TITLE_WORDS.has(word)) return word;
+      return `${word.charAt(0).toUpperCase()}${word.slice(1)}`;
+    })
+    .join(' ');
 }
 
 /* Percent-encodes each path segment so links survive spaces in a custom subdirectory. */
@@ -89,14 +136,27 @@ export function renderBlock(entries: SolvedEntry[]): string {
 }
 
 /**
- * Returns `existing` with `entry` added to the LeetSync-managed table, keyed by slug so
+ * Returns `existing` with `newEntries` merged into the LeetSync-managed table, keyed by slug so
  * re-submitting a problem refreshes its row instead of appending a duplicate. Content outside
  * the markers is left untouched; a README without markers keeps its prose and gains the block.
  */
-export function upsertReadmeEntry(existing: string | null, entry: SolvedEntry): string {
-  const entries = parseEntries(existing).filter((current) => current.slug !== entry.slug);
-  entries.push(entry);
-  const block = renderBlock(entries);
+export function upsertReadmeEntries(existing: string | null, newEntries: SolvedEntry[]): string {
+  const merged: SolvedEntry[] = [];
+  const indexBySlug = new Map<string, number>();
+  //a repeated slug replaces the row already collected rather than adding a second one
+  const put = (entry: SolvedEntry) => {
+    const index = indexBySlug.get(entry.slug);
+    if (index === undefined) {
+      indexBySlug.set(entry.slug, merged.length);
+      merged.push(entry);
+      return;
+    }
+    merged[index] = entry;
+  };
+
+  parseEntries(existing).forEach(put);
+  newEntries.forEach(put);
+  const block = renderBlock(merged);
 
   if (!existing || !existing.trim()) {
     return `${[...README_SCAFFOLD, block].join('\n')}\n`;
@@ -111,4 +171,8 @@ export function upsertReadmeEntry(existing: string | null, entry: SolvedEntry): 
   const before = existing.slice(0, start);
   const after = existing.slice(end + README_END_MARKER.length);
   return `${before}${block}${after}`;
+}
+
+export function upsertReadmeEntry(existing: string | null, entry: SolvedEntry): string {
+  return upsertReadmeEntries(existing, [entry]);
 }

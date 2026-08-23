@@ -48,6 +48,11 @@ The index is a table of the problem number, title, a link to the committed solut
 It lives between `<!-- LEETSYNC:START -->` and `<!-- LEETSYNC:END -->` markers, so anything you write outside those markers is preserved.
 Re-submitting a problem refreshes its existing row rather than adding a duplicate.
 
+Every sync also backfills the index.
+Any solution already committed to the repository but missing from the table is added, so problems you solved before the index existed still show up.
+The title and difficulty for those are looked up on LeetCode, falling back to a title derived from the file name and a difficulty of `Unknown` if the lookup fails.
+A problem solved in more than one language gets a single row, and the whole backfill lands in the same commit as the submission that triggered it.
+
 ## Support
 
 If you encounter any issues or have any suggestions for improving LeetSync, please feel free to [open an issue](https://github.com/3ba2ii/leet-sync/issues) on the GitHub repository.

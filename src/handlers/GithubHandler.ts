@@ -1,7 +1,14 @@
 import { GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_REDIRECT_URI } from '../constants';
 import { QuestionDifficulty } from '../types/Question';
 import { Submission } from '../types/Submission';
-import { SolvedEntry, upsertReadmeEntry } from '../utils/readme.helper';
+import { getQuestionSummary } from '../api/questions/getQuestion';
+import {
+  SolvedEntry,
+  parseEntries,
+  parseSolutionFileName,
+  titleFromSlug,
+  upsertReadmeEntries,
+} from '../utils/readme.helper';
 
 const languagesToExtensions: Record<string, string> = {
   Python: '.py',
@@ -253,6 +260,25 @@ export default class GithubHandler {
     const existingFile = await this.getFile(`${path}/${fileName}`);
     return existingFile?.sha ?? null;
   }
+  //lists the file names directly inside a directory, or nothing when it does not exist yet
+  async listDirectory(path: string): Promise<string[]> {
+    const contents = await fetch(this.contentsUrl(path), {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${this.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+    })
+      .then((x) => x.json())
+      .catch((err) => {
+        console.log(err);
+        return null;
+      });
+
+    //a missing directory answers with an error object rather than an array
+    if (!Array.isArray(contents)) return [];
+    return contents.filter((item) => item?.type === 'file').map((item) => item.name as string);
+  }
   private async putFile(
     fullPath: string,
     content: string,
@@ -354,10 +380,72 @@ export default class GithubHandler {
       this.buildSolutionCommitMessage(problemNumber, title),
     );
   }
-  /* Adds the problem to the solved table in the repo root README, leaving the rest of it alone. */
-  async updateReadme(entry: SolvedEntry) {
+  buildReadmeCommitMessage(entry: SolvedEntry | null, backfilledCount: number) {
+    const backfilled = `${backfilledCount} solved problem${backfilledCount === 1 ? '' : 's'}`;
+    if (entry && backfilledCount) {
+      return `Add ${entry.number}. ${entry.title} and backfill ${backfilled} - LeetSync`;
+    }
+    if (entry) {
+      return `Add ${entry.number}. ${entry.title} to solved list - LeetSync`;
+    }
+    return `Backfill ${backfilled} - LeetSync`;
+  }
+  /**
+   * Finds solutions already committed under `basePath` that the README does not list yet.
+   *
+   * A file name only carries the problem number and slug, so the display title and difficulty
+   * are fetched from LeetCode, falling back to a slug-derived title when that lookup fails.
+   */
+  private async collectMissingEntries(
+    basePath: string,
+    listedSlugs: Set<string>,
+  ): Promise<SolvedEntry[]> {
+    const pending: { fileName: string; number: string; slug: string }[] = [];
+    const seenSlugs = new Set<string>();
+    for (const fileName of await this.listDirectory(basePath)) {
+      const parsed = parseSolutionFileName(fileName);
+      //a problem solved in two languages has two files but earns a single row
+      if (!parsed || listedSlugs.has(parsed.slug) || seenSlugs.has(parsed.slug)) continue;
+      seenSlugs.add(parsed.slug);
+      pending.push({ fileName, ...parsed });
+    }
+
+    const entries: SolvedEntry[] = [];
+    //a first backfill can cover hundreds of problems, so look them up a few at a time
+    const workers = Array.from({ length: Math.min(4, pending.length) }, async () => {
+      let next = pending.shift();
+      while (next) {
+        const summary = await getQuestionSummary(next.slug);
+        entries.push({
+          number: summary?.questionFrontendId ?? next.number,
+          title: summary?.title ?? titleFromSlug(next.slug),
+          slug: next.slug,
+          solutionPath: `${basePath}/${next.fileName}`,
+          difficulty: summary?.difficulty ?? 'Unknown',
+        });
+        next = pending.shift();
+      }
+    });
+    await Promise.all(workers);
+
+    return entries;
+  }
+  /**
+   * Rewrites the solved table in the repo root README, leaving the rest of the file alone.
+   *
+   * Alongside `entry` this picks up any solution already committed but missing from the table,
+   * so problems solved before the index existed are listed too, all in a single commit.
+   */
+  async syncReadme(basePath: string, entry: SolvedEntry | null) {
     const existingFile = await this.getFile('README.md');
-    const updatedContent = upsertReadmeEntry(existingFile?.content ?? null, entry);
+    const listedSlugs = new Set(parseEntries(existingFile?.content ?? null).map((e) => e.slug));
+    if (entry) listedSlugs.add(entry.slug);
+
+    const backfilled = await this.collectMissingEntries(basePath, listedSlugs);
+    const entries = entry ? [entry, ...backfilled] : backfilled;
+    if (!entries.length) return;
+
+    const updatedContent = upsertReadmeEntries(existingFile?.content ?? null, entries);
 
     //re-syncing an unchanged problem would otherwise push an empty commit
     if (existingFile?.content === updatedContent) return;
@@ -365,7 +453,7 @@ export default class GithubHandler {
     await this.putFile(
       'README.md',
       updatedContent,
-      `Add ${entry.number}. ${entry.title} to solved list - LeetSync`,
+      this.buildReadmeCommitMessage(entry, backfilled.length),
       existingFile?.sha ?? null,
     );
   }
@@ -410,7 +498,7 @@ export default class GithubHandler {
 
     await this.createSolutionFile(basePath, fileName, fileContent, `${problemNumber}`, title);
 
-    await this.updateReadme({
+    await this.syncReadme(basePath, {
       number: `${problemNumber}`,
       title,
       slug: titleSlug,

@@ -1,3 +1,4 @@
+import { getQuestionSummary as getQuestionSummaryApi } from '../api/questions/getQuestion';
 import GithubHandler from '../handlers/GithubHandler';
 import { SolvedEntry, upsertReadmeEntry } from '../utils/readme.helper';
 
@@ -6,6 +7,9 @@ jest.mock('../constants', () => ({
   GITHUB_CLIENT_SECRET: '',
   GITHUB_REDIRECT_URI: '',
 }));
+jest.mock('../api/questions/getQuestion', () => ({ getQuestionSummary: jest.fn() }));
+
+const getQuestionSummary = getQuestionSummaryApi as jest.Mock;
 
 describe('GithubHandler utility methods', () => {
   beforeEach(() => {
@@ -123,15 +127,26 @@ describe('GithubHandler readme syncing', () => {
     (global as any).chrome = {
       storage: { sync: { get: jest.fn((keys: any, cb: any) => cb({})), clear: jest.fn() } },
     };
+    getQuestionSummary.mockReset();
   });
 
-  it('commits a scaffolded readme when the repo has none', async () => {
+  //builds a handler whose github calls are stubbed, returning the spy on the write
+  const stubHandler = (
+    readme: { sha: string; content: string } | null,
+    directory: string[] = [],
+  ) => {
     const handler = new GithubHandler();
     const putFile = jest.fn();
-    (handler as any).getFile = jest.fn().mockResolvedValue(null);
+    (handler as any).getFile = jest.fn().mockResolvedValue(readme);
+    (handler as any).listDirectory = jest.fn().mockResolvedValue(directory);
     (handler as any).putFile = putFile;
+    return { handler, putFile };
+  };
 
-    await handler.updateReadme(entry);
+  it('commits a scaffolded readme when the repo has none', async () => {
+    const { handler, putFile } = stubHandler(null);
+
+    await handler.syncReadme('leetcode', entry);
 
     expect(putFile).toHaveBeenCalledWith(
       'README.md',
@@ -142,14 +157,9 @@ describe('GithubHandler readme syncing', () => {
   });
 
   it('reuses the existing sha so the readme is updated rather than recreated', async () => {
-    const handler = new GithubHandler();
-    const putFile = jest.fn();
-    (handler as any).getFile = jest
-      .fn()
-      .mockResolvedValue({ sha: 'sha-123', content: '# Solutions\n' });
-    (handler as any).putFile = putFile;
+    const { handler, putFile } = stubHandler({ sha: 'sha-123', content: '# Solutions\n' });
 
-    await handler.updateReadme(entry);
+    await handler.syncReadme('leetcode', entry);
 
     expect(putFile).toHaveBeenCalledWith(
       'README.md',
@@ -159,16 +169,85 @@ describe('GithubHandler readme syncing', () => {
     );
   });
 
-  it('skips the commit when the problem is already listed', async () => {
-    const handler = new GithubHandler();
-    const putFile = jest.fn();
-    (handler as any).getFile = jest
-      .fn()
-      .mockResolvedValue({ sha: 'sha-123', content: upsertReadmeEntry(null, entry) });
-    (handler as any).putFile = putFile;
+  it('skips the commit when the problem is already listed and nothing is missing', async () => {
+    const { handler, putFile } = stubHandler({
+      sha: 'sha-123',
+      content: upsertReadmeEntry(null, entry),
+    });
 
-    await handler.updateReadme(entry);
+    await handler.syncReadme('leetcode', entry);
 
+    expect(putFile).not.toHaveBeenCalled();
+  });
+
+  it('backfills solutions that were committed before the index existed', async () => {
+    getQuestionSummary.mockResolvedValue({
+      questionFrontendId: '1',
+      title: 'Two Sum',
+      titleSlug: 'two-sum',
+      difficulty: 'Easy',
+    });
+    const { handler, putFile } = stubHandler({ sha: 'sha-123', content: '# Solutions\n' }, [
+      '1-two-sum.py',
+    ]);
+
+    await handler.syncReadme('leetcode', entry);
+
+    const [, content, message] = putFile.mock.calls[0];
+    expect(content).toContain('[Two Sum](https://leetcode.com/problems/two-sum/)');
+    expect(content).toContain('[Solution](leetcode/1-two-sum.py)');
+    expect(content).toContain('**2 problems solved**');
+    expect(message).toBe('Add 437. Path Sum III and backfill 1 solved problem - LeetSync');
+  });
+
+  it('backfills with no new submission when called on its own', async () => {
+    getQuestionSummary.mockResolvedValue({
+      questionFrontendId: '1',
+      title: 'Two Sum',
+      titleSlug: 'two-sum',
+      difficulty: 'Easy',
+    });
+    const { handler, putFile } = stubHandler(null, ['1-two-sum.py']);
+
+    await handler.syncReadme('leetcode', null);
+
+    expect(putFile.mock.calls[0][2]).toBe('Backfill 1 solved problem - LeetSync');
+  });
+
+  it('ignores notes files and counts a problem solved twice only once', async () => {
+    getQuestionSummary.mockResolvedValue(null);
+    const { handler, putFile } = stubHandler(null, [
+      '1-two-sum.py',
+      '1-two-sum.java',
+      '1-two-sum-notes.md',
+      'README.md',
+    ]);
+
+    await handler.syncReadme('leetcode', null);
+
+    expect(putFile.mock.calls[0][1]).toContain('**1 problem solved**');
+  });
+
+  it('falls back to a slug-derived title when the lookup fails', async () => {
+    getQuestionSummary.mockResolvedValue(null);
+    const { handler, putFile } = stubHandler(null, ['42-trapping-rain-water.py']);
+
+    await handler.syncReadme('leetcode', null);
+
+    const content = putFile.mock.calls[0][1];
+    expect(content).toContain('[Trapping Rain Water](https://leetcode.com/problems/');
+    expect(content).toContain('| Unknown |');
+  });
+
+  it('does not re-list a problem the readme already has', async () => {
+    const { handler, putFile } = stubHandler(
+      { sha: 'sha-123', content: upsertReadmeEntry(null, entry) },
+      ['437-path-sum-iii.py'],
+    );
+
+    await handler.syncReadme('leetcode', null);
+
+    expect(getQuestionSummary).not.toHaveBeenCalled();
     expect(putFile).not.toHaveBeenCalled();
   });
 });
