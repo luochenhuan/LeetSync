@@ -3,6 +3,9 @@ import {
   README_START_MARKER,
   SolvedEntry,
   parseEntries,
+  parseSolutionFileName,
+  titleFromSlug,
+  upsertReadmeEntries,
   upsertReadmeEntry,
 } from '../utils/readme.helper';
 
@@ -84,6 +87,41 @@ describe('upsertReadmeEntry', () => {
 
     expect(readme).toContain('[Solution](my%20solutions/1-two-sum.py)');
     expect(parseEntries(readme)[0].solutionPath).toBe('my solutions/1-two-sum.py');
+  });
+});
+
+describe('parseSolutionFileName', () => {
+  it('recovers the number and slug from a solution file', () => {
+    expect(parseSolutionFileName('437-path-sum-iii.py')).toEqual({
+      number: '437',
+      slug: 'path-sum-iii',
+    });
+    expect(parseSolutionFileName('1-two-sum.java')).toEqual({ number: '1', slug: 'two-sum' });
+  });
+
+  it('rejects notes files and anything not named after a problem', () => {
+    expect(parseSolutionFileName('437-path-sum-iii-notes.md')).toBeNull();
+    expect(parseSolutionFileName('README.md')).toBeNull();
+    expect(parseSolutionFileName('helpers.py')).toBeNull();
+  });
+});
+
+describe('titleFromSlug', () => {
+  it('title-cases a slug, keeping minor words lowercase and roman numerals upper', () => {
+    expect(titleFromSlug('two-sum')).toBe('Two Sum');
+    expect(titleFromSlug('path-sum-iii')).toBe('Path Sum III');
+    expect(titleFromSlug('best-time-to-buy-and-sell-stock')).toBe(
+      'Best Time to Buy and Sell Stock',
+    );
+  });
+});
+
+describe('upsertReadmeEntries', () => {
+  it('merges several problems into one table in a single pass', () => {
+    const readme = upsertReadmeEntries(null, [pathSum, twoSum]);
+
+    expect(parseEntries(readme).map((entry) => entry.number)).toEqual(['1', '437']);
+    expect(readme).toContain('**2 problems solved**');
   });
 });
 
