@@ -6,10 +6,6 @@ import {
   toDateKey,
 } from '../utils/streak.helper';
 
-const getDaysBefore = (numberOfDays: number) => {
-  return new Date(new Date().getTime() - numberOfDays * 24 * 60 * 60 * 1000);
-};
-
 describe('Streak Helper Functions', () => {
   beforeEach(() => {
     jest.useFakeTimers();
@@ -187,7 +183,14 @@ describe('Streak Helper Functions', () => {
         { input: 5, expectedTitle: 'Proficient' },
         { input: 6, expectedTitle: 'Expert' },
         { input: 7, expectedTitle: 'Master' },
+        { input: 8, expectedTitle: 'Grandmaster' },
+        { input: 9, expectedTitle: 'Legend' },
         { input: 10, expectedTitle: 'Mythic' },
+        { input: 11, expectedTitle: 'Immortal' },
+        { input: 12, expectedTitle: 'Titan' },
+        { input: 13, expectedTitle: 'Deity' },
+        { input: 14, expectedTitle: 'Celestial' },
+        { input: 15, expectedTitle: 'Cosmic' },
       ];
       testCases.forEach(({ input, expectedTitle }) => {
         const [title, message] = generateTitle(input);
