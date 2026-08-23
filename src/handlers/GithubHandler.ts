@@ -1,11 +1,7 @@
 import { GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_REDIRECT_URI } from '../constants';
 import { QuestionDifficulty } from '../types/Question';
 import { Submission } from '../types/Submission';
-
-type DistributionType = {
-  percentile: string;
-  value: number;
-};
+import { SolvedEntry, upsertReadmeEntry } from '../utils/readme.helper';
 
 const languagesToExtensions: Record<string, string> = {
   Python: '.py',
@@ -224,11 +220,14 @@ export default class GithubHandler {
   }
 
   /* Submissions Methods */
-  async fileExists(path: string, fileName: string): Promise<string | null> {
-    //check if the file exists in the path using the github API
-    const url = `https://api.github.com/repos/${this.username}/${this.repo}/contents/${path}/${fileName}`;
-
-    const uploadedFile = await fetch(url, {
+  //joins the segments so a root-level file does not end up with a doubled slash
+  private contentsUrl(fullPath: string) {
+    const cleanedPath = fullPath.split('/').filter(Boolean).join('/');
+    return `${this.base_url}/repos/${this.username}/${this.repo}/contents/${cleanedPath}`;
+  }
+  //returns the sha and decoded content of a file, or null when it does not exist yet
+  async getFile(fullPath: string): Promise<{ sha: string; content: string } | null> {
+    const existingFile = await fetch(this.contentsUrl(fullPath), {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${this.accessToken}`,
@@ -236,24 +235,37 @@ export default class GithubHandler {
       },
     })
       .then((x) => x.json())
-      .catch((err) => console.log(err));
+      .catch((err) => {
+        console.log(err);
+        return null;
+      });
 
-    if (uploadedFile.message === 'Not Found') {
+    if (!existingFile || !existingFile.sha) {
       return null;
     }
-    return uploadedFile.sha;
+    //github returns base64 split across lines, and this mirrors the encoding used when uploading
+    const content = existingFile.content
+      ? decodeURIComponent(escape(atob(existingFile.content.replace(/\n/g, ''))))
+      : '';
+    return { sha: existingFile.sha, content };
   }
-  async upload(path: string, fileName: string, content: string, commitMessage: string) {
-    const sha = await this.fileExists(path, fileName);
-    //create a new file with the content
-    const url = `https://api.github.com/repos/${this.username}/${this.repo}/contents/${path}/${fileName}`;
+  async fileExists(path: string, fileName: string): Promise<string | null> {
+    const existingFile = await this.getFile(`${path}/${fileName}`);
+    return existingFile?.sha ?? null;
+  }
+  private async putFile(
+    fullPath: string,
+    content: string,
+    commitMessage: string,
+    sha: string | null,
+  ) {
     const data = {
       message: commitMessage,
       content: btoa(unescape(encodeURIComponent(content))),
       sha, //if the file already exists, we need to pass the sha of the file otherwise it will be null
     };
 
-    await fetch(url, {
+    await fetch(this.contentsUrl(fullPath), {
       method: 'PUT',
       headers: {
         Authorization: `Bearer ${this.accessToken}`,
@@ -263,6 +275,12 @@ export default class GithubHandler {
     })
       .then((x) => x.json())
       .catch((err) => console.log(err));
+  }
+  async upload(path: string, fileName: string, content: string, commitMessage: string) {
+    const fullPath = `${path}/${fileName}`;
+    const existingFile = await this.getFile(fullPath);
+    //create a new file with the content
+    await this.putFile(fullPath, content, commitMessage, existingFile?.sha ?? null);
   }
   getDifficultyColor(difficulty: QuestionDifficulty) {
     switch (difficulty) {
@@ -316,46 +334,47 @@ export default class GithubHandler {
     }
     return `${header}\n\n${code}\n`;
   }
+  buildSolutionCommitMessage(problemNumber: string, title: string) {
+    return `${problemNumber}. ${title} - LeetSync`;
+  }
   async createSolutionFile(
     path: string,
     fileName: string,
     content: string,
-    stats: {
-      memory: number;
-      memoryDisplay: string;
-      memoryPercentile: number;
-      runtime: number;
-      runtimeDisplay: string;
-      runtimePercentile: number;
-    },
+    problemNumber: string,
+    title: string,
   ) {
     //check if that file already exists
     //if it does, Update the file with the new content
     //if it doesn't, create a new file with the content
-    const msg = `Time: ${stats.runtimeDisplay} (${stats.runtimePercentile.toFixed(2)}%) | Memory: ${
-      stats.memoryDisplay
-    } (${stats.memoryPercentile.toFixed(2)}%) - LeetSync`;
-    await this.upload(path, fileName, content, msg);
+    await this.upload(
+      path,
+      fileName,
+      content,
+      this.buildSolutionCommitMessage(problemNumber, title),
+    );
+  }
+  /* Adds the problem to the solved table in the repo root README, leaving the rest of it alone. */
+  async updateReadme(entry: SolvedEntry) {
+    const existingFile = await this.getFile('README.md');
+    const updatedContent = upsertReadmeEntry(existingFile?.content ?? null, entry);
+
+    //re-syncing an unchanged problem would otherwise push an empty commit
+    if (existingFile?.content === updatedContent) return;
+
+    await this.putFile(
+      'README.md',
+      updatedContent,
+      `Add ${entry.number}. ${entry.title} to solved list - LeetSync`,
+      existingFile?.sha ?? null,
+    );
   }
 
   async submit(
     submission: Submission, //todo: define the submission type
   ): Promise<boolean> {
     if (!this.accessToken || !this.username || !this.repo) return false;
-    const {
-      code,
-      memory,
-      memoryDisplay,
-      memoryPercentile,
-      runtime,
-      runtimePercentile,
-      runtimeDisplay,
-      runtimeDistribution,
-      lang,
-      statusCode,
-      question,
-      notes,
-    } = submission;
+    const { code, lang, statusCode, question, notes } = submission;
 
     if (statusCode !== 10) {
       //failed submission
@@ -389,13 +408,14 @@ export default class GithubHandler {
       );
     }
 
-    await this.createSolutionFile(basePath, fileName, fileContent, {
-      memory,
-      memoryDisplay,
-      memoryPercentile,
-      runtime,
-      runtimeDisplay,
-      runtimePercentile,
+    await this.createSolutionFile(basePath, fileName, fileContent, `${problemNumber}`, title);
+
+    await this.updateReadme({
+      number: `${problemNumber}`,
+      title,
+      slug: titleSlug,
+      solutionPath: `${basePath}/${fileName}`,
+      difficulty,
     });
 
     const todayTimestamp = Date.now();

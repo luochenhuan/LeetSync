@@ -41,6 +41,13 @@ To use LeetSync, follow these steps:
 2. LeetSync will create a new file or update an existing one in your selected repository automatically.
 3. Go and check the submission on your github repository
 
+Each accepted solution is committed with a message naming the problem, in the form `437. Path Sum III - LeetSync`.
+
+LeetSync also keeps an index of everything you have solved in the `README.md` at the root of your synced repository.
+The index is a table of the problem number, title, a link to the committed solution, and the difficulty, sorted by problem number.
+It lives between `<!-- LEETSYNC:START -->` and `<!-- LEETSYNC:END -->` markers, so anything you write outside those markers is preserved.
+Re-submitting a problem refreshes its existing row rather than adding a duplicate.
+
 ## Support
 
 If you encounter any issues or have any suggestions for improving LeetSync, please feel free to [open an issue](https://github.com/3ba2ii/leet-sync/issues) on the GitHub repository.
