@@ -18,22 +18,62 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
   /* Will be used if we want to get messages from content scripts to background script */
   sendResponse({ status: 'OK' });
 });
-chrome.cookies.get({ name: 'LEETCODE_SESSION', url: 'https://leetcode.com/' }, function (cookie) {
+const LEETCODE_SESSION_COOKIE = 'LEETCODE_SESSION';
+const SESSION_WRITE_DEBOUNCE_MS = 1000;
+
+let pendingSession: string | null = null;
+let flushScheduled = false;
+
+/**
+ * Persists the LeetCode session cookie, coalescing bursts.
+ *
+ * chrome.storage.sync permits 120 writes per minute. LeetCode refreshes this
+ * cookie on many requests and Chrome reports every update as a removal plus an
+ * insertion, so writing on each event trips MAX_WRITE_OPERATIONS_PER_MINUTE.
+ * Once the quota is blown the write that matters is rejected too, leaving
+ * `leetcode_session` unset, and LeetCodeHandler.getSubmission then returns null
+ * for every submission without surfacing an error.
+ */
+const storeLeetcodeSession = (value: string | null) => {
+  pendingSession = value;
+  if (flushScheduled) return;
+  flushScheduled = true;
+
+  setTimeout(() => {
+    flushScheduled = false;
+    const next = pendingSession;
+
+    chrome.storage.sync.get('leetcode_session', (current) => {
+      if (chrome.runtime.lastError) {
+        console.warn('LeetSync: could not read stored session:', chrome.runtime.lastError.message);
+        return;
+      }
+      // Re-writing an unchanged value still counts against the quota.
+      if (current?.leetcode_session === next) return;
+
+      chrome.storage.sync.set({ leetcode_session: next }, () => {
+        if (chrome.runtime.lastError) {
+          console.warn('LeetSync: could not store session:', chrome.runtime.lastError.message);
+          return;
+        }
+        console.log('LeetSync: LeetCode session stored.');
+      });
+    });
+  }, SESSION_WRITE_DEBOUNCE_MS);
+};
+
+chrome.cookies.get({ name: LEETCODE_SESSION_COOKIE, url: 'https://leetcode.com/' }, (cookie) => {
   if (!cookie) return;
-  chrome.storage.sync.set({ leetcode_session: cookie.value }, () => {
-    console.log(`Leetcode Synced Successfully`);
-  });
+  storeLeetcodeSession(cookie.value);
 });
 
-chrome.cookies.onChanged.addListener(function (info) {
-  const { cookie } = info;
-  //get LEETCODE_SESSION cookie
-  if (cookie.name === 'LEETCODE_SESSION') {
-    //save cookie value to local storage
-    chrome.storage.sync.set({ leetcode_session: cookie?.value || null }, () => {
-      console.log(`Leetcode Re-Synced Successfully`);
-    });
-  }
+chrome.cookies.onChanged.addListener((info) => {
+  if (info.cookie.name !== LEETCODE_SESSION_COOKIE) return;
+  // Chrome reports an update as a removal (cause 'overwrite') followed by an
+  // insertion. Acting on the removal half would clear a session that is about
+  // to be replaced, and doubles the number of writes.
+  if (info.removed && info.cause === 'overwrite') return;
+  storeLeetcodeSession(info.removed ? null : info.cookie.value);
 });
 chrome.storage.sync.onChanged.addListener((changes) => {
   console.log(`🚀 ~ file: background.ts:68 ~ changes:`, JSON.stringify(changes, null, 2));
