@@ -8,11 +8,13 @@ export const getSubmission = async (
 ): Promise<{ submissionDetails: Submission } | null> => {
   try {
     const client = getClient();
-    return client.request(GET_SUBMISSION_DETAILS, {
+    // Must be awaited inside the try: returning the promise lets a rejection
+    // escape the catch and die as an unhandled rejection in the content script.
+    return await client.request(GET_SUBMISSION_DETAILS, {
       submissionId,
     });
   } catch (e) {
-    console.log(e);
+    console.error('LeetSync: failed to fetch submission details', e);
     return null;
   }
 };
@@ -21,7 +23,7 @@ export const getAllSubmission = async (
 ): Promise<{ submissionDetails: Submission } | null> => {
   try {
     const client = getClient();
-    return client.request(GET_SUBMISSIONS, {
+    return await client.request(GET_SUBMISSIONS, {
       questionSlug,
       limit: 20,
       offset: 0,
@@ -29,7 +31,7 @@ export const getAllSubmission = async (
       status: 10,
     });
   } catch (e) {
-    console.log(e);
+    console.error('LeetSync: failed to fetch submission list', e);
     return null;
   }
 };

@@ -19,7 +19,13 @@ chrome.runtime.onMessage.addListener(async function (request, _s, _sendResponse)
       await sleep(retries * 1000);
       submission = await leetcode.getSubmission(questionSlug);
     }
-    if (!submission) return;
+    if (!submission) {
+      console.warn(
+        `LeetSync: no submission found for "${questionSlug}", nothing was pushed. ` +
+          'This usually means the LeetCode session cookie was not sent with the query.',
+      );
+      return;
+    }
     //validate submission's timestamp, if its was submitted more than 1 minute ago, then its an old submission and we should ignore it
     const now = new Date();
     const submissionDate = new Date(submission.timestamp * 1000);
