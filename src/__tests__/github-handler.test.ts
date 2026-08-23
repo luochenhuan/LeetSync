@@ -1,4 +1,5 @@
 import GithubHandler from '../handlers/GithubHandler';
+import { SolvedEntry, upsertReadmeEntry } from '../utils/readme.helper';
 
 jest.mock('../constants', () => ({
   GITHUB_CLIENT_ID: '',
@@ -40,7 +41,9 @@ describe('GithubHandler utility methods', () => {
 
   it('loads token from storage', async () => {
     const handler = new GithubHandler();
-    (global as any).chrome.storage.sync.get = jest.fn((keys: any, cb: any) => cb({ github_leetsync_token: 'abc' }));
+    (global as any).chrome.storage.sync.get = jest.fn((keys: any, cb: any) =>
+      cb({ github_leetsync_token: 'abc' }),
+    );
     const token = await handler.loadTokenFromStorage();
     expect(token).toBe('abc');
   });
@@ -52,9 +55,13 @@ describe('GithubHandler utility methods', () => {
     const timestamp = new Date(2021, 4, 5, 12).getTime() / 1000;
     const header = handler.createFileHeader('lru-cache', '.py', timestamp);
     expect(header).toBe(
-      ['"""', 'Source : https://leetcode.com/problems/lru-cache', 'Author : luochenhuan', 'Date   : 2021/05/05', '"""'].join(
-        '\n',
-      ),
+      [
+        '"""',
+        'Source : https://leetcode.com/problems/lru-cache',
+        'Author : luochenhuan',
+        'Date   : 2021/05/05',
+        '"""',
+      ].join('\n'),
     );
   });
 
@@ -62,7 +69,12 @@ describe('GithubHandler utility methods', () => {
     const handler = new GithubHandler();
     (handler as any).username = 'luochenhuan';
     const timestamp = new Date(2021, 4, 5, 12).getTime() / 1000;
-    const content = handler.applyTemplate('class Solution:\n    pass', 'lru-cache', '.py', timestamp);
+    const content = handler.applyTemplate(
+      'class Solution:\n    pass',
+      'lru-cache',
+      '.py',
+      timestamp,
+    );
     expect(content).toContain('Source : https://leetcode.com/problems/lru-cache');
     expect(content).toContain('import unittest, sys, math, heapq');
     expect(content).toContain('from collections import defaultdict');
@@ -88,5 +100,75 @@ describe('GithubHandler utility methods', () => {
     const token = await handler.loadTokenFromStorage();
     expect(token).toBe('');
     expect(clear).toHaveBeenCalled();
+  });
+
+  it('names the solution commit after the problem number and title', () => {
+    const handler = new GithubHandler();
+    expect(handler.buildSolutionCommitMessage('437', 'Path Sum III')).toBe(
+      '437. Path Sum III - LeetSync',
+    );
+  });
+});
+
+describe('GithubHandler readme syncing', () => {
+  const entry: SolvedEntry = {
+    number: '437',
+    title: 'Path Sum III',
+    slug: 'path-sum-iii',
+    solutionPath: 'leetcode/437-path-sum-iii.py',
+    difficulty: 'Medium',
+  };
+
+  beforeEach(() => {
+    (global as any).chrome = {
+      storage: { sync: { get: jest.fn((keys: any, cb: any) => cb({})), clear: jest.fn() } },
+    };
+  });
+
+  it('commits a scaffolded readme when the repo has none', async () => {
+    const handler = new GithubHandler();
+    const putFile = jest.fn();
+    (handler as any).getFile = jest.fn().mockResolvedValue(null);
+    (handler as any).putFile = putFile;
+
+    await handler.updateReadme(entry);
+
+    expect(putFile).toHaveBeenCalledWith(
+      'README.md',
+      expect.stringContaining('[Path Sum III](https://leetcode.com/problems/path-sum-iii/)'),
+      'Add 437. Path Sum III to solved list - LeetSync',
+      null,
+    );
+  });
+
+  it('reuses the existing sha so the readme is updated rather than recreated', async () => {
+    const handler = new GithubHandler();
+    const putFile = jest.fn();
+    (handler as any).getFile = jest
+      .fn()
+      .mockResolvedValue({ sha: 'sha-123', content: '# Solutions\n' });
+    (handler as any).putFile = putFile;
+
+    await handler.updateReadme(entry);
+
+    expect(putFile).toHaveBeenCalledWith(
+      'README.md',
+      expect.stringContaining('# Solutions'),
+      expect.any(String),
+      'sha-123',
+    );
+  });
+
+  it('skips the commit when the problem is already listed', async () => {
+    const handler = new GithubHandler();
+    const putFile = jest.fn();
+    (handler as any).getFile = jest
+      .fn()
+      .mockResolvedValue({ sha: 'sha-123', content: upsertReadmeEntry(null, entry) });
+    (handler as any).putFile = putFile;
+
+    await handler.updateReadme(entry);
+
+    expect(putFile).not.toHaveBeenCalled();
   });
 });
