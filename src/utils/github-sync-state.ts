@@ -6,6 +6,13 @@ export type GithubSyncErrorState = {
   occurredAt: number;
 };
 
+export type GithubRepositoryCheckResult =
+  | { status: 'found' }
+  | {
+      status: 'not-found' | 'authentication-required' | 'error';
+      message: string;
+    };
+
 export const GITHUB_CREDENTIAL_KEYS = ['github_leetsync_token', 'github_username'];
 export const GITHUB_SYNC_ERROR_KEY = 'github_sync_error';
 export const GITHUB_RECONNECT_MESSAGE =

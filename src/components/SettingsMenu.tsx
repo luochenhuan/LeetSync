@@ -73,10 +73,12 @@ const SettingsMenu: React.FC<SettingsMenuProps> = () => {
 
     setLoading(true);
     const github = new GithubHandler();
-    const isFound = await github.checkIfRepoExists(`${username}/${repoName}`);
+    const checkResult = await github.checkRepository(`${username}/${repoName}`);
     setLoading(false);
-    if (!isFound) {
-      return setError('Repository not found');
+    if (checkResult.status !== 'found') {
+      setError(checkResult.message);
+      if (checkResult.status === 'authentication-required') window.location.reload();
+      return;
     }
     chrome.storage.sync.set({ github_leetsync_repo: repoName }, () => {
       console.log('Repository Linked Successfully');

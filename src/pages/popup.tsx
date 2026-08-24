@@ -76,6 +76,11 @@ const PopupPage: React.FC<PopupProps> = () => {
     );
   }, []);
 
+  const restartGithubAuthorization = useCallback(() => {
+    setIsSynced(false);
+    setSteps(1);
+  }, []);
+
   const renderStep = () => {
     if (step === 0) {
       return <StartOnboarding nextStep={nextStep} />;
@@ -87,7 +92,7 @@ const PopupPage: React.FC<PopupProps> = () => {
       return <AuthorizeWithLeetCode nextStep={nextStep} />;
     }
     if (step === 3) {
-      return <SelectRepositoryStep nextStep={nextStep} />;
+      return <SelectRepositoryStep onAuthorizationRequired={restartGithubAuthorization} />;
     }
   };
 

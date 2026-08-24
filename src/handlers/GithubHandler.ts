@@ -15,7 +15,11 @@ import {
   GITHUB_RECONNECT_MESSAGE,
   GITHUB_SYNC_ERROR_KEY,
 } from '../utils/github-sync-state';
-import type { GithubSyncErrorKind, GithubSyncErrorState } from '../utils/github-sync-state';
+import type {
+  GithubRepositoryCheckResult,
+  GithubSyncErrorKind,
+  GithubSyncErrorState,
+} from '../utils/github-sync-state';
 
 const languagesToExtensions: Record<string, string> = {
   Python: '.py',
@@ -237,9 +241,11 @@ export default class GithubHandler {
     });
     return response.access_token;
   }
-  async checkIfRepoExists(repo_name: string): Promise<boolean> {
+  async checkRepository(repo_name: string): Promise<GithubRepositoryCheckResult> {
     const trimmedRepoName = repo_name.replace('.git', '').trim();
-    if (!trimmedRepoName) return false;
+    if (!trimmedRepoName) {
+      return { status: 'not-found', message: 'Repository not found' };
+    }
     try {
       await this.requestGithub(`${this.base_url}/repos/${trimmedRepoName}`, {
         method: 'GET',
@@ -249,10 +255,26 @@ export default class GithubHandler {
           Authorization: `Bearer ${await this.loadTokenFromStorage()}`,
         },
       });
-      return true;
+      return { status: 'found' };
     } catch (error) {
+      if (error instanceof GithubApiError) {
+        if (error.status === 401) {
+          return { status: 'authentication-required', message: GITHUB_RECONNECT_MESSAGE };
+        }
+        if (error.status === 404) {
+          return { status: 'not-found', message: 'Repository not found' };
+        }
+        console.error('LeetSync: GitHub repository check failed:', error);
+        return {
+          status: 'error',
+          message: `GitHub could not verify this repository (${error.status}): ${error.message}`,
+        };
+      }
       console.error('LeetSync: GitHub repository check failed:', error);
-      return false;
+      return {
+        status: 'error',
+        message: 'GitHub could not be reached. Check your connection and try again.',
+      };
     }
   }
   public getProblemExtension(lang: string) {

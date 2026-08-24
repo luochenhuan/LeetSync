@@ -420,15 +420,42 @@ describe('GithubHandler submission syncing', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('does not accept a repository check when GitHub returns a server error', async () => {
+  it('distinguishes a missing repository from authorization and API failures', async () => {
+    installStorage();
+    global.fetch = jest
+      .fn()
+      .mockResolvedValue(githubResponse(404, { message: 'Not Found' })) as jest.Mock;
+
+    const result = await new GithubHandler().checkRepository('octocat/missing-repository');
+
+    expect(result).toEqual({ status: 'not-found', message: 'Repository not found' });
+  });
+
+  it('describes a repository check server error instead of calling it not found', async () => {
     installStorage();
     global.fetch = jest
       .fn()
       .mockResolvedValue(githubResponse(500, { message: 'Server Error' })) as jest.Mock;
 
-    const result = await new GithubHandler().checkIfRepoExists('octocat/leetcode-solutions');
+    const result = await new GithubHandler().checkRepository('octocat/leetcode-solutions');
 
-    expect(result).toBe(false);
+    expect(result).toEqual({
+      status: 'error',
+      message: 'GitHub could not verify this repository (500): Server Error',
+    });
+  });
+
+  it('accepts a repository only after GitHub confirms it', async () => {
+    installStorage();
+    global.fetch = jest
+      .fn()
+      .mockResolvedValue(
+        githubResponse(200, { full_name: 'octocat/leetcode-solutions' }),
+      ) as jest.Mock;
+
+    const result = await new GithubHandler().checkRepository('octocat/leetcode-solutions');
+
+    expect(result).toEqual({ status: 'found' });
   });
 
   it('reports a rejected file write without recording the problem as synced', async () => {
