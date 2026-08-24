@@ -4,13 +4,29 @@ type CookieListener = (info: {
   cookie: { name: string; value: string };
 }) => void;
 
+export {};
+
 const loadBackground = (stored: string | null = 'session-abc') => {
   const setMock = jest.fn((_items: any, cb?: any) => cb && cb());
   let cookieListener: CookieListener = () => {};
+  let runtimeListener: (request: any, sender: any, sendResponse: any) => void = () => {};
+  const action = {
+    setIcon: jest.fn(),
+    setBadgeText: jest.fn(),
+    setBadgeBackgroundColor: jest.fn(),
+    setTitle: jest.fn(),
+  };
 
   (global as any).chrome = {
-    runtime: { onMessage: { addListener: jest.fn() }, lastError: undefined },
-    action: { setIcon: jest.fn() },
+    runtime: {
+      onMessage: {
+        addListener: jest.fn((fn: typeof runtimeListener) => {
+          runtimeListener = fn;
+        }),
+      },
+      lastError: undefined,
+    },
+    action,
     tabs: { query: jest.fn(), sendMessage: jest.fn() },
     webRequest: { onCompleted: { addListener: jest.fn() } },
     cookies: {
@@ -34,7 +50,12 @@ const loadBackground = (stored: string | null = 'session-abc') => {
     require('../background');
   });
 
-  return { setMock, fireCookieChange: (info: any) => cookieListener(info) };
+  return {
+    action,
+    setMock,
+    fireCookieChange: (info: any) => cookieListener(info),
+    fireRuntimeMessage: (request: any) => runtimeListener(request, {}, jest.fn()),
+  };
 };
 
 const churn = (fire: (info: any) => void, value: string, times: number) => {
@@ -90,5 +111,29 @@ describe('background: LEETCODE_SESSION syncing', () => {
     jest.runOnlyPendingTimers();
 
     expect(setMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('background: submission status', () => {
+  it('shows a visible error badge when a GitHub sync fails', () => {
+    const { action, fireRuntimeMessage } = loadBackground();
+
+    fireRuntimeMessage({ type: 'set-sync-error' });
+
+    expect(action.setBadgeText).toHaveBeenCalledWith({ text: '!' });
+    expect(action.setBadgeBackgroundColor).toHaveBeenCalledWith({ color: '#C53030' });
+    expect(action.setTitle).toHaveBeenCalledWith({
+      title: 'LeetSync sync failed. Open the extension for details.',
+    });
+  });
+
+  it('clears the visible error badge after GitHub authorization recovers', () => {
+    const { action, fireRuntimeMessage } = loadBackground();
+    fireRuntimeMessage({ type: 'set-sync-error' });
+
+    fireRuntimeMessage({ type: 'clear-sync-error' });
+
+    expect(action.setBadgeText).toHaveBeenLastCalledWith({ text: '' });
+    expect(action.setTitle).toHaveBeenLastCalledWith({ title: 'LeetSync' });
   });
 });

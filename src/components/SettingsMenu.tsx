@@ -25,7 +25,6 @@ import {
   PopoverFooter,
   PopoverHeader,
   PopoverTrigger,
-  Tag,
   Text,
   Tooltip,
   VStack,

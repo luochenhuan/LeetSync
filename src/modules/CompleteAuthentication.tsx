@@ -17,9 +17,11 @@ import Logo from '../components/Logo';
 import { GITHUB_REDIRECT_URI, GITHUB_CLIENT_ID } from '../constants';
 import { GithubHandler } from '../handlers';
 import { Footer } from './Footer';
+import { GITHUB_SYNC_ERROR_KEY } from '../utils/github-sync-state';
 
-const AuthorizeWithGithub = ({ nextStep }: { nextStep: Function }) => {
+const AuthorizeWithGithub = ({ nextStep }: { nextStep: () => void }) => {
   const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [authorizationError, setAuthorizationError] = useState<string | null>(null);
 
   const handleClicked = () => {
     const authUrl = `https://github.com/login/oauth/authorize?client_id=${GITHUB_CLIENT_ID}&redirect_uri=${GITHUB_REDIRECT_URI}&scope=repo`;
@@ -35,12 +37,18 @@ const AuthorizeWithGithub = ({ nextStep }: { nextStep: Function }) => {
     if (accessToken && accessToken.length > 0) {
       nextStep();
     }
-  }, [accessToken]);
+  }, [accessToken, nextStep]);
 
   useEffect(() => {
     chrome.storage.sync.get(['github_leetsync_token'], (result) => {
       if (result.github_leetsync_token) {
         setAccessToken(result.github_leetsync_token);
+      }
+    });
+    chrome.storage.local.get([GITHUB_SYNC_ERROR_KEY], (result) => {
+      const syncError = result[GITHUB_SYNC_ERROR_KEY];
+      if (syncError?.kind === 'authentication') {
+        setAuthorizationError(syncError.message);
       }
     });
   }, []);
@@ -54,6 +62,11 @@ const AuthorizeWithGithub = ({ nextStep }: { nextStep: Function }) => {
           account. <br />
         </Text>
       </VStack>
+      {authorizationError && (
+        <Text color="red.600" fontSize="sm" w="95%" textAlign="center">
+          {authorizationError}
+        </Text>
+      )}
       <Button
         colorScheme={'blackAlpha'}
         bg="blackAlpha.800"
@@ -71,7 +84,7 @@ const AuthorizeWithGithub = ({ nextStep }: { nextStep: Function }) => {
     </VStack>
   );
 };
-const AuthorizeWithLeetCode = ({ nextStep }: { nextStep: Function }) => {
+const AuthorizeWithLeetCode = ({ nextStep }: { nextStep: () => void }) => {
   const [leetcodeSession, setLeetcodeSession] = useState<string | null>(null);
 
   const handleClicked = () => {
@@ -89,7 +102,7 @@ const AuthorizeWithLeetCode = ({ nextStep }: { nextStep: Function }) => {
     if (leetcodeSession && leetcodeSession.length > 0) {
       nextStep();
     }
-  }, [leetcodeSession]);
+  }, [leetcodeSession, nextStep]);
 
   useEffect(() => {
     chrome.storage.sync.get(['leetcode_session'], (result) => {

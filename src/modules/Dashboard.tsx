@@ -72,7 +72,7 @@ const LinkedGithubComponents = () => {
     </Box>
   );
 };
-const Dashboard: React.FC<DashboardProps> = ({}) => {
+const Dashboard: React.FC<DashboardProps> = () => {
   const [solvedProblems, setSolvedProblems] = React.useState({
     easy: 0,
     medium: 0,

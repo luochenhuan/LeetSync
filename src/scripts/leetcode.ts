@@ -1,6 +1,7 @@
 //this script should only run in leetcode/problems/*.com pages  (i.e. the problem page)
 
 import { LeetCodeHandler, GithubHandler } from '../handlers';
+import { SET_SYNC_ERROR_MESSAGE, SET_SYNC_SUCCESS_MESSAGE } from '../utils/github-sync-state';
 
 const leetcode = new LeetCodeHandler();
 const github = new GithubHandler();
@@ -36,7 +37,9 @@ chrome.runtime.onMessage.addListener(async function (request, _s, _sendResponse)
 
     const isPushed = await github.submit(submission);
     if (isPushed) {
-      chrome.runtime.sendMessage({ type: 'set-fire-icon' });
+      chrome.runtime.sendMessage({ type: SET_SYNC_SUCCESS_MESSAGE });
+    } else {
+      chrome.runtime.sendMessage({ type: SET_SYNC_ERROR_MESSAGE });
     }
   }
 });

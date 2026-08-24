@@ -9,6 +9,13 @@ import {
   titleFromSlug,
   upsertReadmeEntries,
 } from '../utils/readme.helper';
+import {
+  CLEAR_SYNC_ERROR_MESSAGE,
+  GITHUB_CREDENTIAL_KEYS,
+  GITHUB_RECONNECT_MESSAGE,
+  GITHUB_SYNC_ERROR_KEY,
+} from '../utils/github-sync-state';
+import type { GithubSyncErrorKind, GithubSyncErrorState } from '../utils/github-sync-state';
 
 const languagesToExtensions: Record<string, string> = {
   Python: '.py',
@@ -85,6 +92,17 @@ interface GithubUser {
   login: string;
   /* other user data can be added here, but not needed for now */
 }
+
+class GithubApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'GithubApiError';
+  }
+}
+
 export default class GithubHandler {
   base_url: string = 'https://api.github.com';
   private client_secret: string | null = GITHUB_CLIENT_SECRET ?? '';
@@ -132,8 +150,8 @@ export default class GithubHandler {
         const token = result['github_leetsync_token'];
         if (!token) {
           console.log('No access token found.');
-          chrome.storage.sync.clear();
           resolve('');
+          return;
         }
         resolve(token);
       });
@@ -141,35 +159,41 @@ export default class GithubHandler {
   }
   async authorize(code: string): Promise<string | null> {
     const access_token = await this.fetchAccessToken(code);
+    if (!access_token) return null;
     const user = await this.fetchGithubUser(access_token);
-    if (!access_token || !user) return null;
+    if (!user) return null;
     this.accessToken = access_token;
     this.username = user.login;
     return access_token;
   }
   async fetchGithubUser(token: string): Promise<GithubUser | null> {
-    //validate the token
-    const response = await fetch(`${this.base_url}/user`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        Authorization: `token ${token}`,
-      },
-    }).then((response) => response.json());
-
-    if (!response || response.message === 'Bad credentials') {
-      console.error('No access token found.');
-      chrome.storage.sync.clear();
+    let user: GithubUser | null;
+    try {
+      user = await this.requestGithub<GithubUser>(`${this.base_url}/user`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      });
+    } catch (error) {
+      if (!(error instanceof GithubApiError)) {
+        await this.storeSyncError('network', 'GitHub could not be reached. Try again.');
+      }
+      console.error('LeetSync: GitHub authorization failed:', error);
       return null;
     }
+    if (!user) return null;
 
     //set access token in chrome storage
     chrome.storage.sync.set({
       github_leetsync_token: token,
-      github_username: response.login,
+      github_username: user.login,
     });
-    return response;
+    await chrome.storage.local.remove(GITHUB_SYNC_ERROR_KEY);
+    chrome.runtime.sendMessage({ type: CLEAR_SYNC_ERROR_MESSAGE });
+    return user;
   }
   async fetchAccessToken(code: string) {
     const token = await this.loadTokenFromStorage();
@@ -183,18 +207,28 @@ export default class GithubHandler {
       redirect_uri: this.redirect_uri,
       client_secret: this.client_secret,
     };
-    const response = await fetch(tokenUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify(body),
-    }).then((response) => response.json());
+    let tokenResponse: Response;
+    try {
+      tokenResponse = await fetch(tokenUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      await this.storeSyncError('network', 'GitHub could not be reached. Try again.');
+      console.error('LeetSync: GitHub token exchange failed:', error);
+      return;
+    }
 
-    if (!response || response.message === 'Bad credentials') {
-      console.log('No access token found.');
-      chrome.storage.sync.clear();
+    const response = await tokenResponse.json().catch(() => null);
+    if (!tokenResponse.ok || !response?.access_token) {
+      console.error('LeetSync: GitHub token exchange was rejected.');
+      await this.invalidateGithubAuthorization(
+        'GitHub authorization failed. Reconnect GitHub and try again.',
+      );
       return;
     }
 
@@ -206,21 +240,20 @@ export default class GithubHandler {
   async checkIfRepoExists(repo_name: string): Promise<boolean> {
     const trimmedRepoName = repo_name.replace('.git', '').trim();
     if (!trimmedRepoName) return false;
-    //check if repo exists in github user's account
-    const result = await fetch(`${this.base_url}/repos/${trimmedRepoName}`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        Authorization: `token ${await this.loadTokenFromStorage()}`,
-      },
-    })
-      .then((x) => x.json())
-      .catch((e) => console.error(e));
-    if (result.message === 'Not Found' || result.message === 'Bad credentials') {
+    try {
+      await this.requestGithub(`${this.base_url}/repos/${trimmedRepoName}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          Authorization: `Bearer ${await this.loadTokenFromStorage()}`,
+        },
+      });
+      return true;
+    } catch (error) {
+      console.error('LeetSync: GitHub repository check failed:', error);
       return false;
     }
-    return true;
   }
   public getProblemExtension(lang: string) {
     return languagesToExtensions[lang];
@@ -232,20 +265,54 @@ export default class GithubHandler {
     const cleanedPath = fullPath.split('/').filter(Boolean).join('/');
     return `${this.base_url}/repos/${this.username}/${this.repo}/contents/${cleanedPath}`;
   }
+  private async storeSyncError(kind: GithubSyncErrorKind, message: string) {
+    const error: GithubSyncErrorState = { kind, message, occurredAt: Date.now() };
+    await chrome.storage.local.set({ [GITHUB_SYNC_ERROR_KEY]: error });
+  }
+  private async invalidateGithubAuthorization(message = GITHUB_RECONNECT_MESSAGE) {
+    this.accessToken = '';
+    this.username = '';
+    await chrome.storage.sync.remove(GITHUB_CREDENTIAL_KEYS);
+    await this.storeSyncError('authentication', message);
+  }
+  private async requestGithub<T>(
+    url: string,
+    init: RequestInit,
+    allowNotFound = false,
+  ): Promise<T | null> {
+    let response: Response;
+    try {
+      response = await fetch(url, init);
+    } catch (error) {
+      throw new Error(
+        error instanceof Error ? error.message : 'GitHub could not be reached.',
+      );
+    }
+
+    const payload = await response.json().catch(() => null);
+    if (response.ok) return payload as T;
+    if (allowNotFound && response.status === 404) return null;
+
+    const message =
+      payload && typeof payload === 'object' && 'message' in payload
+        ? String(payload.message)
+        : `GitHub request failed with status ${response.status}.`;
+    if (response.status === 401) await this.invalidateGithubAuthorization();
+    throw new GithubApiError(response.status, message);
+  }
   //returns the sha and decoded content of a file, or null when it does not exist yet
   async getFile(fullPath: string): Promise<{ sha: string; content: string } | null> {
-    const existingFile = await fetch(this.contentsUrl(fullPath), {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${this.accessToken}`,
-        'Content-Type': 'application/json',
+    const existingFile = await this.requestGithub<{ sha?: string; content?: string }>(
+      this.contentsUrl(fullPath),
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+          'Content-Type': 'application/json',
+        },
       },
-    })
-      .then((x) => x.json())
-      .catch((err) => {
-        console.log(err);
-        return null;
-      });
+      true,
+    );
 
     if (!existingFile || !existingFile.sha) {
       return null;
@@ -262,18 +329,17 @@ export default class GithubHandler {
   }
   //lists the file names directly inside a directory, or nothing when it does not exist yet
   async listDirectory(path: string): Promise<string[]> {
-    const contents = await fetch(this.contentsUrl(path), {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${this.accessToken}`,
-        'Content-Type': 'application/json',
+    const contents = await this.requestGithub<{ type?: string; name: string }[]>(
+      this.contentsUrl(path),
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+          'Content-Type': 'application/json',
+        },
       },
-    })
-      .then((x) => x.json())
-      .catch((err) => {
-        console.log(err);
-        return null;
-      });
+      true,
+    );
 
     //a missing directory answers with an error object rather than an array
     if (!Array.isArray(contents)) return [];
@@ -291,16 +357,14 @@ export default class GithubHandler {
       sha, //if the file already exists, we need to pass the sha of the file otherwise it will be null
     };
 
-    await fetch(this.contentsUrl(fullPath), {
+    await this.requestGithub(this.contentsUrl(fullPath), {
       method: 'PUT',
       headers: {
         Authorization: `Bearer ${this.accessToken}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(data),
-    })
-      .then((x) => x.json())
-      .catch((err) => console.log(err));
+    });
   }
   async upload(path: string, fileName: string, content: string, commitMessage: string) {
     const fullPath = `${path}/${fileName}`;
@@ -485,51 +549,68 @@ export default class GithubHandler {
     const fileName = `${problemNumber}-${titleSlug}${langExtension}`;
     const fileContent = this.applyTemplate(code, titleSlug, langExtension, submission.timestamp);
 
-    if (notes && notes?.length) {
-      //notes share the flat directory, so name them per-problem to avoid collisions
-      await this.createNotesFile(
-        basePath,
-        `${problemNumber}-${titleSlug}-notes.md`,
-        notes,
-        `Added notes file for ${title}`,
+    try {
+      if (notes && notes?.length) {
+        //notes share the flat directory, so name them per-problem to avoid collisions
+        await this.createNotesFile(
+          basePath,
+          `${problemNumber}-${titleSlug}-notes.md`,
+          notes,
+          `Added notes file for ${title}`,
+          title,
+        );
+      }
+
+      await this.createSolutionFile(basePath, fileName, fileContent, `${problemNumber}`, title);
+
+      await this.syncReadme(basePath, {
+        number: `${problemNumber}`,
         title,
-      );
-    }
+        slug: titleSlug,
+        solutionPath: `${basePath}/${fileName}`,
+        difficulty,
+      });
 
-    await this.createSolutionFile(basePath, fileName, fileContent, `${problemNumber}`, title);
+      const todayTimestamp = Date.now();
 
-    await this.syncReadme(basePath, {
-      number: `${problemNumber}`,
-      title,
-      slug: titleSlug,
-      solutionPath: `${basePath}/${fileName}`,
-      difficulty,
-    });
+      chrome.storage.sync.set({
+        lastSolved: { slug: titleSlug, timestamp: todayTimestamp },
+      });
 
-    const todayTimestamp = Date.now();
+      //update the problems solved
+      const { problemsSolved } = (await chrome.storage.sync.get('problemsSolved')) ?? {
+        problemsSolved: [],
+      }; //{slug: {...info}}
 
-    chrome.storage.sync.set({
-      lastSolved: { slug: titleSlug, timestamp: todayTimestamp },
-    });
-
-    //update the problems solved
-    const { problemsSolved } = (await chrome.storage.sync.get('problemsSolved')) ?? {
-      problemsSolved: [],
-    }; //{slug: {...info}}
-
-    chrome.storage.sync.set({
-      problemsSolved: {
-        ...problemsSolved,
-        [titleSlug]: {
-          question: {
-            difficulty,
-            questionId,
+      chrome.storage.sync.set({
+        problemsSolved: {
+          ...problemsSolved,
+          [titleSlug]: {
+            question: {
+              difficulty,
+              questionId,
+            },
+            timestamp: todayTimestamp,
           },
-          timestamp: todayTimestamp,
         },
-      },
-    });
-    //create a new solution file with the code inside the folder
-    return true;
+      });
+      await chrome.storage.local.remove(GITHUB_SYNC_ERROR_KEY);
+      //create a new solution file with the code inside the folder
+      return true;
+    } catch (error) {
+      if (error instanceof GithubApiError) {
+        if (error.status !== 401) {
+          await this.storeSyncError(
+            'api',
+            `GitHub rejected the sync (${error.status}): ${error.message}`,
+          );
+        }
+        console.error(`LeetSync: GitHub sync failed (${error.status}): ${error.message}`);
+      } else {
+        await this.storeSyncError('network', 'GitHub could not be reached. Try syncing again.');
+        console.error('LeetSync: GitHub sync failed:', error);
+      }
+      return false;
+    }
   }
 }

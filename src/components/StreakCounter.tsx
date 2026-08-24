@@ -6,7 +6,6 @@ interface StreakCounterProps {
   problemsPerDay?: { [date: string]: number };
 }
 const DAYS_OF_WEEK = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-let today = new Date();
 
 const StreakCounter: React.FC<StreakCounterProps> = ({ problemsPerDay }) => {
   const [streak, setStreak] = React.useState([false, false, false, false, false]);

@@ -8,6 +8,7 @@ LeetSync is a Chrome extension that enables you to sync your LeetCode problem su
 - [Installation](#installation)
 - [Get Started](#get-started)
 - [Usage](#usage)
+- [Troubleshooting GitHub Sync](#troubleshooting-github-sync)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -52,6 +53,13 @@ Every sync also backfills the index.
 Any solution already committed to the repository but missing from the table is added, so problems you solved before the index existed still show up.
 The title and difficulty for those are looked up on LeetCode, falling back to a title derived from the file name and a difficulty of `Unknown` if the lookup fails.
 A problem solved in more than one language gets a single row, and the whole backfill lands in the same commit as the submission that triggered it.
+
+## Troubleshooting GitHub Sync
+
+When GitHub rejects a sync, LeetSync shows a red `!` badge on the extension and displays the failure details in the popup.
+If the GitHub authorization has expired or was revoked, opening the popup takes you directly to the GitHub reconnect step.
+Reauthorizing GitHub preserves the linked repository, LeetCode session, and solved-problem history.
+After reconnecting, submit an accepted solution again to retry the sync.
 
 ## Support
 

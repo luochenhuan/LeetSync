@@ -1,5 +1,17 @@
+import {
+  CLEAR_SYNC_ERROR_MESSAGE,
+  SET_SYNC_ERROR_MESSAGE,
+  SET_SYNC_SUCCESS_MESSAGE,
+} from './utils/github-sync-state';
+
+const clearSyncErrorIndicator = () => {
+  chrome.action.setBadgeText({ text: '' });
+  chrome.action.setTitle({ title: 'LeetSync' });
+};
+
 chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
-  if (request.type === 'set-fire-icon') {
+  if (request.type === SET_SYNC_SUCCESS_MESSAGE) {
+    clearSyncErrorIndicator();
     //set icon to fire then back to normal after 2 second
 
     chrome.action.setIcon(
@@ -14,6 +26,14 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         }, 5000);
       },
     );
+  }
+  if (request.type === CLEAR_SYNC_ERROR_MESSAGE) clearSyncErrorIndicator();
+  if (request.type === SET_SYNC_ERROR_MESSAGE) {
+    chrome.action.setBadgeBackgroundColor({ color: '#C53030' });
+    chrome.action.setBadgeText({ text: '!' });
+    chrome.action.setTitle({
+      title: 'LeetSync sync failed. Open the extension for details.',
+    });
   }
   /* Will be used if we want to get messages from content scripts to background script */
   sendResponse({ status: 'OK' });

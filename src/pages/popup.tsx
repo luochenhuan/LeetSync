@@ -1,5 +1,13 @@
-import { CircularProgress, Container, Heading, VStack } from '@chakra-ui/react';
-import React, { useEffect, useState } from 'react';
+import {
+  Alert,
+  AlertDescription,
+  AlertIcon,
+  CircularProgress,
+  Container,
+  Heading,
+  VStack,
+} from '@chakra-ui/react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   AuthorizeWithGithub,
   AuthorizeWithLeetCode,
@@ -8,6 +16,8 @@ import {
 } from '../modules/CompleteAuthentication';
 import Dashboard from '../modules/Dashboard';
 import { OnboardingLayout } from '../modules/OnboardingLayout';
+import { GITHUB_SYNC_ERROR_KEY } from '../utils/github-sync-state';
+import type { GithubSyncErrorState } from '../utils/github-sync-state';
 interface PopupProps {}
 
 type UserGlobalData = {
@@ -15,6 +25,7 @@ type UserGlobalData = {
   github_username: string;
   github_leetsync_repo: string;
   leetcode_session: string;
+  github_sync_error: GithubSyncErrorState;
 };
 
 const hasCompletedRequirements = (userData: Partial<UserGlobalData>): boolean => {
@@ -26,20 +37,23 @@ const hasCompletedRequirements = (userData: Partial<UserGlobalData>): boolean =>
   );
 };
 const getUserData = async (): Promise<Partial<UserGlobalData>> => {
-  let userData: Partial<UserGlobalData> = {};
+  const [syncResult, localResult] = await Promise.all([
+    chrome.storage.sync.get([
+      'github_leetsync_token',
+      'github_username',
+      'github_leetsync_repo',
+      'leetcode_session',
+    ]),
+    chrome.storage.local.get([GITHUB_SYNC_ERROR_KEY]),
+  ]);
 
-  await chrome.storage.sync
-    .get(['github_leetsync_token', 'github_username', 'github_leetsync_repo', 'leetcode_session'])
-    .then((result) => {
-      userData = {
-        github_leetsync_token: result.github_leetsync_token,
-        github_username: result.github_username,
-        github_leetsync_repo: result.github_leetsync_repo,
-        leetcode_session: result.leetcode_session,
-      };
-    });
-
-  return userData;
+  return {
+    github_leetsync_token: syncResult.github_leetsync_token,
+    github_username: syncResult.github_username,
+    github_leetsync_repo: syncResult.github_leetsync_repo,
+    leetcode_session: syncResult.leetcode_session,
+    github_sync_error: localResult[GITHUB_SYNC_ERROR_KEY],
+  };
 };
 
 const STEPS_TO_COMPONENT = {
@@ -56,13 +70,11 @@ const PopupPage: React.FC<PopupProps> = () => {
   const [step, setSteps] = useState(1);
   const [userData, setUserData] = useState<Partial<UserGlobalData>>({});
 
-  const nextStep = () => {
-    setSteps(Math.min(step + 1, Object.keys(STEPS_TO_COMPONENT).length - 1));
-  };
-
-  const _previousStep = () => {
-    setSteps(Math.max(step - 1, 0));
-  };
+  const nextStep = useCallback(() => {
+    setSteps((currentStep) =>
+      Math.min(currentStep + 1, Object.keys(STEPS_TO_COMPONENT).length - 1),
+    );
+  }, []);
 
   const renderStep = () => {
     if (step === 0) {
@@ -100,8 +112,12 @@ const PopupPage: React.FC<PopupProps> = () => {
           setUserData(result);
         }
         let newStep = 3;
-        if (!result.github_leetsync_token && !result.github_username) {
+        if (result.github_sync_error?.kind === 'authentication') {
+          newStep = 1;
+        } else if (!result.github_leetsync_token && !result.github_username) {
           newStep = 0;
+        } else if (!result.github_leetsync_token || !result.github_username) {
+          newStep = 1;
         } else if (!result.leetcode_session) {
           newStep = 2;
         }
@@ -116,7 +132,19 @@ const PopupPage: React.FC<PopupProps> = () => {
 
   if (isSynced) {
     //show the dashboard page
-    return <Dashboard />;
+    return (
+      <VStack spacing={3}>
+        {userData.github_sync_error && (
+          <Alert status="error" borderRadius="md" maxW="650px">
+            <AlertIcon />
+            <AlertDescription fontSize="sm">
+              {userData.github_sync_error.message}
+            </AlertDescription>
+          </Alert>
+        )}
+        <Dashboard />
+      </VStack>
+    );
   }
 
   //todo: add error boundary
