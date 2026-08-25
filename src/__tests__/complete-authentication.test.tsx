@@ -79,7 +79,7 @@ describe('GitHub authorization step', () => {
   it('asks the user to reconnect instead of claiming a private repository was not found', async () => {
     const syncState: Record<string, any> = {
       github_leetsync_token: 'expired-token',
-      github_username: 'luochenhuan',
+      github_username: 'octocat',
     };
     const localState: Record<string, any> = {};
     const createArea = (state: Record<string, any>) => ({
@@ -120,7 +120,7 @@ describe('GitHub authorization step', () => {
     const onAuthorizationRequired = jest.fn();
     render(<SelectRepositoryStep onAuthorizationRequired={onAuthorizationRequired} />);
     fireEvent.change(screen.getByPlaceholderText('Repository URL'), {
-      target: { value: 'https://github.com/luochenhuan/leetcode' },
+      target: { value: 'https://github.com/octocat/leetcode-solutions' },
     });
     fireEvent.click(screen.getByText('Link Repository'));
 

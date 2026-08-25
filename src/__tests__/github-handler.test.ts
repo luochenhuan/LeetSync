@@ -126,7 +126,7 @@ describe('GithubHandler utility methods', () => {
 
   it('creates a python file header matching the repo template', () => {
     const handler = new GithubHandler();
-    (handler as any).username = 'luochenhuan';
+    (handler as any).username = 'octocat';
     // 2021-05-05 12:00:00 local time
     const timestamp = new Date(2021, 4, 5, 12).getTime() / 1000;
     const header = handler.createFileHeader('lru-cache', '.py', timestamp);
@@ -134,7 +134,7 @@ describe('GithubHandler utility methods', () => {
       [
         '"""',
         'Source : https://leetcode.com/problems/lru-cache',
-        'Author : luochenhuan',
+        'Author : octocat',
         'Date   : 2021/05/05',
         '"""',
       ].join('\n'),
@@ -143,7 +143,7 @@ describe('GithubHandler utility methods', () => {
 
   it('wraps python code with template imports and test footer', () => {
     const handler = new GithubHandler();
-    (handler as any).username = 'luochenhuan';
+    (handler as any).username = 'octocat';
     const timestamp = new Date(2021, 4, 5, 12).getTime() / 1000;
     const content = handler.applyTemplate(
       'class Solution:\n    pass',
@@ -160,7 +160,7 @@ describe('GithubHandler utility methods', () => {
 
   it('uses block comments for non-python languages and no python footer', () => {
     const handler = new GithubHandler();
-    (handler as any).username = 'luochenhuan';
+    (handler as any).username = 'octocat';
     const timestamp = new Date(2021, 4, 5, 12).getTime() / 1000;
     const content = handler.applyTemplate('class Solution {}', 'two-sum', '.java', timestamp);
     expect(content).toContain('/*\nSource : https://leetcode.com/problems/two-sum');
@@ -359,8 +359,8 @@ describe('GithubHandler submission syncing', () => {
 
     Object.assign(syncState, {
       github_leetsync_token: 'new-token',
-      github_username: 'luochenhuan',
-      github_leetsync_repo: 'leetcode',
+      github_username: 'octocat',
+      github_leetsync_repo: 'leetcode-solutions',
     });
     global.fetch = jest
       .fn()
