@@ -350,6 +350,32 @@ describe('GithubHandler submission syncing', () => {
     });
   });
 
+  it('uses credentials linked after the LeetCode content script was initialized', async () => {
+    const { syncState } = installStorage();
+    delete syncState.github_leetsync_token;
+    delete syncState.github_username;
+    delete syncState.github_leetsync_repo;
+    const handler = new GithubHandler();
+
+    Object.assign(syncState, {
+      github_leetsync_token: 'new-token',
+      github_username: 'luochenhuan',
+      github_leetsync_repo: 'leetcode',
+    });
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(githubResponse(404, { message: 'Not Found' }))
+      .mockResolvedValueOnce(githubResponse(201, { content: { sha: 'solution-sha' } }))
+      .mockResolvedValueOnce(githubResponse(404, { message: 'Not Found' }))
+      .mockResolvedValueOnce(githubResponse(404, { message: 'Not Found' }))
+      .mockResolvedValueOnce(githubResponse(201, { content: { sha: 'readme-sha' } })) as jest.Mock;
+
+    const result = await handler.submit(acceptedSubmission);
+
+    expect(result).toBe(true);
+    expect(global.fetch).toHaveBeenCalled();
+  });
+
   it('preserves LeetCode and repository settings when GitHub authorization is invalid', async () => {
     const { syncState, localState } = installStorage();
     global.fetch = jest.fn().mockResolvedValue({

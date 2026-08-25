@@ -97,6 +97,13 @@ interface GithubUser {
   /* other user data can be added here, but not needed for now */
 }
 
+const GITHUB_SETTINGS_KEYS = [
+  'github_leetsync_token',
+  'github_username',
+  'github_leetsync_repo',
+  'github_leetsync_subdirectory',
+];
+
 class GithubApiError extends Error {
   constructor(
     readonly status: number,
@@ -118,22 +125,17 @@ export default class GithubHandler {
   private github_leetsync_subdirectory: string;
 
   constructor() {
-    //inject QuestionHandler dependency
-    //fetch github_access_token, github_username, github_leetsync_repo from storage
-    //if any of them is not present, throw an error
     this.accessToken = '';
     this.username = '';
     this.repo = '';
     this.github_leetsync_subdirectory = '';
 
-    chrome.storage.sync.get(
-      [
-        'github_leetsync_token',
-        'github_username',
-        'github_leetsync_repo',
-        'github_leetsync_subdirectory',
-      ],
-      (result) => {
+    void this.refreshGithubSettings();
+  }
+
+  private async refreshGithubSettings(): Promise<void> {
+    return new Promise((resolve) => {
+      chrome.storage.sync.get(GITHUB_SETTINGS_KEYS, (result) => {
         if (
           !result.github_leetsync_token ||
           !result.github_username ||
@@ -141,13 +143,15 @@ export default class GithubHandler {
         ) {
           console.log('❌ GithubHandler: Missing Github Credentials');
         }
-        this.accessToken = result['github_leetsync_token'];
-        this.username = result['github_username'];
-        this.repo = result['github_leetsync_repo'];
-        this.github_leetsync_subdirectory = result['github_leetsync_subdirectory'];
-      },
-    );
+        this.accessToken = result['github_leetsync_token'] ?? '';
+        this.username = result['github_username'] ?? '';
+        this.repo = result['github_leetsync_repo'] ?? '';
+        this.github_leetsync_subdirectory = result['github_leetsync_subdirectory'] ?? '';
+        resolve();
+      });
+    });
   }
+
   async loadTokenFromStorage(): Promise<string> {
     return new Promise((resolve, reject) => {
       chrome.storage.sync.get(['github_leetsync_token'], (result) => {
@@ -547,6 +551,8 @@ export default class GithubHandler {
   async submit(
     submission: Submission, //todo: define the submission type
   ): Promise<boolean> {
+    // The content script can outlive onboarding, so credentials may have changed since construction.
+    await this.refreshGithubSettings();
     if (!this.accessToken || !this.username || !this.repo) return false;
     const { code, lang, statusCode, question, notes } = submission;
 

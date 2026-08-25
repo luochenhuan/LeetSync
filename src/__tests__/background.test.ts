@@ -10,6 +10,8 @@ const loadBackground = (stored: string | null = 'session-abc') => {
   const setMock = jest.fn((_items: any, cb?: any) => cb && cb());
   let cookieListener: CookieListener = () => {};
   let runtimeListener: (request: any, sender: any, sendResponse: any) => void = () => {};
+  let webRequestListener: (details: any) => void = () => {};
+  const sendMessage = jest.fn();
   const action = {
     setIcon: jest.fn(),
     setBadgeText: jest.fn(),
@@ -27,8 +29,17 @@ const loadBackground = (stored: string | null = 'session-abc') => {
       lastError: undefined,
     },
     action,
-    tabs: { query: jest.fn(), sendMessage: jest.fn() },
-    webRequest: { onCompleted: { addListener: jest.fn() } },
+    tabs: {
+      query: jest.fn((_query: any, callback: any) => callback([{ id: 99 }])),
+      sendMessage,
+    },
+    webRequest: {
+      onCompleted: {
+        addListener: jest.fn((fn: typeof webRequestListener) => {
+          webRequestListener = fn;
+        }),
+      },
+    },
     cookies: {
       get: jest.fn(),
       onChanged: {
@@ -52,9 +63,11 @@ const loadBackground = (stored: string | null = 'session-abc') => {
 
   return {
     action,
+    sendMessage,
     setMock,
     fireCookieChange: (info: any) => cookieListener(info),
     fireRuntimeMessage: (request: any) => runtimeListener(request, {}, jest.fn()),
+    fireWebRequest: (details: any) => webRequestListener(details),
   };
 };
 
@@ -135,5 +148,27 @@ describe('background: submission status', () => {
 
     expect(action.setBadgeText).toHaveBeenLastCalledWith({ text: '' });
     expect(action.setTitle).toHaveBeenLastCalledWith({ title: 'LeetSync' });
+  });
+});
+
+describe('background: accepted submission routing', () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  it('delivers the submission event to the originating LeetCode tab', () => {
+    const { fireWebRequest, sendMessage } = loadBackground();
+    fireWebRequest({
+      method: 'POST',
+      tabId: 42,
+      url: 'https://leetcode.com/problems/meeting-rooms-ii/submit/',
+    });
+
+    jest.advanceTimersByTime(5000);
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      42,
+      { type: 'get-submission', data: { questionSlug: 'meeting-rooms-ii' } },
+      expect.any(Function),
+    );
   });
 });

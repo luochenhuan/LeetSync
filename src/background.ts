@@ -99,17 +99,14 @@ chrome.storage.sync.onChanged.addListener((changes) => {
   console.log(`🚀 ~ file: background.ts:68 ~ changes:`, JSON.stringify(changes, null, 2));
 });
 
-export const sendMessageToContentScript = (type: string, data: any) => {
-  chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-    if (!tabs.length || !tabs[0].id) return;
-    chrome.tabs.sendMessage(tabs[0].id, { type, data }, function (response) {
-      if (chrome.runtime.lastError) {
-        console.log(chrome.runtime.lastError.message);
-        // Handle the error here
-        return;
-      }
-      console.log(`✅ Acknowledged`, response);
-    });
+export const sendMessageToContentScript = (tabId: number, type: string, data: any) => {
+  if (tabId < 0) return;
+  chrome.tabs.sendMessage(tabId, { type, data }, function (response) {
+    if (chrome.runtime.lastError) {
+      console.log(chrome.runtime.lastError.message);
+      return;
+    }
+    console.log(`✅ Acknowledged`, response);
   });
 };
 
@@ -127,7 +124,7 @@ chrome.webRequest.onCompleted.addListener(
       // Wait 5 secs to complete the checks
       // Send a message to the content script to get the submission
       setTimeout(() => {
-        sendMessageToContentScript('get-submission', { questionSlug });
+        sendMessageToContentScript(details.tabId, 'get-submission', { questionSlug });
       }, 5000);
     }
   },
